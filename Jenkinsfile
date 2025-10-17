@@ -11,18 +11,29 @@ pipeline {
             }
             steps {
                 sh '''
-                echo "Hello World !!!"
-                ls -la
-                node --version
-                npm --version
-                npm ci
-                npm run build
-                ls -la
+                    ls -la
+                    node --version
+                    npm --version
+                    npm ci
+                    npm run build
+                    ls -la
                 '''
             }
         }
+
         stage('Test') {
-            sh 'echo "Test stage"'
+            agent {
+                docker {
+                    image 'node:18-alpine'
+                    reuseNode true
+                }
+            }
+
+            steps {
+                sh '''
+                    echo "Test stage"
+                '''
+            }
         }
     }
 }
