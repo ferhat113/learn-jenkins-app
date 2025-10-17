@@ -23,7 +23,6 @@ pipeline {
             }
         }
         */
-        //this is another comment
 
         stage('Test') {
             agent {
@@ -32,12 +31,6 @@ pipeline {
                     reuseNode true
                 }
             }
-            /*
-            juste
-            multiple 
-            lines
-            comment
-            */
 
             steps {
                 sh '''
@@ -46,12 +39,28 @@ pipeline {
                 '''
             }
         }
+
+        stage('E2E') {
+            agent {
+                docker {
+                    image 'mcr.microsoft.com/playwright:v1.56.0-noble'
+                    reuseNode true
+                }
+            }
+
+            steps {
+                sh '''
+                    npm install -g serve
+                    serve -s build 
+                    npx playwright test
+                '''
+            }
+        }
     }
 
     post {
-        //this is a comment
         always {
-            junit 'test-results/junit.xml'
+            junit 'jest-results/junit.xml'
         }
     }
 }
