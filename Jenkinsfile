@@ -2,6 +2,8 @@ pipeline {
     agent any
 
     stages {
+        /*
+
         stage('Build') {
             agent {
                 docker {
@@ -20,6 +22,8 @@ pipeline {
                 '''
             }
         }
+        */
+        //this is another comment
 
         stage('Test') {
             agent {
@@ -28,10 +32,16 @@ pipeline {
                     reuseNode true
                 }
             }
+            /*
+            juste
+            multiple 
+            lines
+            comment
+            */
 
             steps {
                 sh '''
-                    test -f build/index.html
+                    #test -f build/index.html
                     npm test
                 '''
             }
@@ -39,6 +49,7 @@ pipeline {
     }
 
     post {
+        //this is a comment
         always {
             junit 'test-results/junit.xml'
         }
