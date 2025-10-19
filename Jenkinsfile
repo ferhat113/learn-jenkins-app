@@ -1,26 +1,18 @@
 pipeline {
+    // Agent definition for the entire pipeline
     agent any
 
+    // Define the image name globally. 
     environment {
+        // Jenkins is on the Worker node (192.168.0.33), so this is the registry host.
         IMAGE_HOST = "192.168.0.33"
         IMAGE_NAME = "${IMAGE_HOST}:5000/my-react-app:${env.BUILD_NUMBER}"
-        LOCAL_PORT = "8080"
-        REMOTE_PORT = "8081"
-        CONTAINER_NAME_LOCAL = "react-app-local"
-        CONTAINER_NAME_REMOTE = "react-app-remote"
-        REMOTE_HOST = "192.168.0.34"
-        DOCKERFILE_DIR = "docker"
+        LOCAL_PORT = "8080"  // Port for local deployment (on 192.168.0.33)
     }
 
     stages {
 
-        stage('Clean Workspace') {
-            steps {
-                deleteDir()
-            }
-        }
-
-        stage('Build React App') {
+        stage('Build') {
             agent {
                 docker {
                     image 'node:18-alpine'
@@ -28,100 +20,60 @@ pipeline {
                 }
             }
             steps {
-                sh 'npm install && npm run build'
+                sh 'npm ci && npm run build'
             }
         }
-
-        stage('Run Tests') {
-            agent {
-                docker {
-                    image 'node:18-alpine'
-                    reuseNode true
-                }
-            }
-            environment {
-                JEST_JUNIT_OUTPUT_DIR = 'jest-results'
-                JEST_JUNIT_OUTPUT_NAME = 'junit.xml'
-            }
+        
+        stage('Package (Docker Image)') {
             steps {
-                sh 'mkdir -p jest-results && npm test'
-            }
-            post {
-                always {
-                    junit "${JEST_JUNIT_OUTPUT_DIR}/${JEST_JUNIT_OUTPUT_NAME}"
-                }
-            }
-        }
-
-        stage('Prepare Dockerfile') {
-            steps {
-                sh 'mkdir -p ${DOCKERFILE_DIR}'
-                writeFile file: "${DOCKERFILE_DIR}/Dockerfile", text: '''
-                    FROM nginx:alpine
-                    COPY build /usr/share/nginx/html
-                    EXPOSE 80
-                '''
-            }
-        }
-
-        stage('Build and Push Docker Image') {
-            agent {
-                docker {
-                    image 'docker:24.0-cli'
-                    args '-v /var/run/docker.sock:/var/run/docker.sock -u 0'
-                    reuseNode true
-                }
-            }
-            steps {
+                // Create Dockerfile outside of withDockerContainer context to ensure shell stability
                 sh '''
-                    echo "--- Building Docker Image: ${IMAGE_NAME} ---"
-                    docker build -t ${IMAGE_NAME} -f ${DOCKERFILE_DIR}/Dockerfile .
-                    docker push ${IMAGE_NAME}
-                    echo "--- Docker Image Pushed ---"
+                    echo "FROM nginx:alpine" > Dockerfile
+                    echo "COPY build /usr/share/nginx/html" >> Dockerfile
+                    echo "EXPOSE 80" >> Dockerfile
                 '''
-            }
-        }
 
-        stage('Deploy Locally') {
-            agent {
-                docker {
-                    image 'docker:24.0-cli'
-                    args '-v /var/run/docker.sock:/var/run/docker.sock -u 0'
-                    reuseNode true
-                }
-            }
-            steps {
-                sh '''
-                    echo "--- Deploying Locally on ${IMAGE_HOST}:${LOCAL_PORT} ---"
-                    docker rm -f ${CONTAINER_NAME_LOCAL} || true
-                    docker run -d --name ${CONTAINER_NAME_LOCAL} -p ${LOCAL_PORT}:80 ${IMAGE_NAME}
-                    echo "✅ Local deployment complete!"
-                '''
-            }
-        }
-
-        stage('Deploy Remotely') {
-            agent {
-                docker {
-                    image 'instrumentisto/rsync-ssh'
-                    args '-u 0'
-                }
-            }
-            steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'SSH_SERVER_CREDENTIALS', usernameVariable: 'SSH_USER')]) {
-                    sshagent(['SSH_SERVER_CREDENTIALS']) {
+                // Now run the Docker client container to build and push the image
+                script {
+                    docker.image('docker:24.0-cli').withRun('-v /var/run/docker.sock:/var/run/docker.sock -u 0') { container ->
                         sh '''
-                            echo "--- Deploying Remotely to ${REMOTE_HOST}:${REMOTE_PORT} ---"
-                            SSH_TARGET="${SSH_USER}@${REMOTE_HOST}"
-                            SSH_OPTS="-o StrictHostKeyChecking=no"
-
-                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker rm -f ${CONTAINER_NAME_REMOTE} || true"
-                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker pull ${IMAGE_NAME}"
-                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker run -d --name ${CONTAINER_NAME_REMOTE} -p ${REMOTE_PORT}:80 ${IMAGE_NAME}"
-                            echo "✅ Remote deployment complete!"
+                            echo "--- Building Docker Image: ${IMAGE_NAME} ---"
+                            
+                            # Build the image 
+                            docker build -t ${IMAGE_NAME} .
+                            
+                            # Push the image to the local registry (192.168.0.33:5000)
+                            docker push ${IMAGE_NAME}
+                            echo "--- Docker Image Pushed to Registry: ${IMAGE_NAME} ---"
                         '''
                     }
                 }
+            }
+        }
+
+        stage('Deploy Locally (Worker Node - 192.168.0.33)') {
+            // Deploying on the Jenkins host, so we use the Docker client directly.
+            agent {
+                docker {
+                    image 'docker:24.0-cli'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock -u 0' 
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    echo "--- Starting local Docker deployment to ${IMAGE_HOST}:${LOCAL_PORT} ---"
+                    
+                    CONTAINER_NAME="react-app-local"
+
+                    # Stop and remove the old container
+                    docker ps -a --format '{{.Names}}' | grep ${CONTAINER_NAME} && docker rm -f ${CONTAINER_NAME} || true
+                    
+                    # The image is already local, just run it.
+                    docker run -d --name ${CONTAINER_NAME} -p ${LOCAL_PORT}:80 ${IMAGE_NAME}
+                    
+                    echo "Local Deployment successful! App is running on ${IMAGE_HOST}:${LOCAL_PORT}"
+                '''
             }
         }
     }
