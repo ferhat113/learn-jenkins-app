@@ -12,8 +12,7 @@ function App() {
           target="_blank"
           rel="noopener noreferrer"
         >
-          Sabir was here ! ans so was Bouhdache
-          and so was izimar
+          Sabir was here ! ans so was Bouhdache and so was izimar
         </a>
       </header>
       <p>
