@@ -29,7 +29,7 @@ pipeline {
         stage('Deploy') {
             agent {
                 docker {
-                    image 'node:18-alpine'
+                    image 'node:18-alpine' // Consider switching to a non-Alpine image if issues persist
                     reuseNode true
                 }
             }
@@ -41,6 +41,13 @@ pipeline {
                     node_modules/.bin/netlify status
                     echo "Current directory: $(pwd)"
                     ls -la
+
+                    # Run the build command to double check its success
+                    echo "Running npm run build to check for errors..."
+                    npm run build
+                    
+                    # Deploy only if build is successful
+                    echo "Deploying to Netlify..."
                     node_modules/.bin/netlify deploy --dir=build --prod
                 '''
             }
