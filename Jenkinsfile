@@ -22,7 +22,8 @@ pipeline {
                     npm --version
                     npm ci
                     npm run build
-                    ls -la
+                    echo "--- Verifying build directory ---"
+                    ls -la build
                 '''
             }
         }
@@ -37,7 +38,7 @@ pipeline {
             steps {
                 sh '''
                     echo "--- Installing Netlify CLI for deployment ---"
-                    npm install netlify-cli
+                    npm install netlify-cli@17.37.0
                     node_modules/.bin/netlify --version
 
                     echo "--- Creating .netlify/state.json manually ---"
@@ -45,8 +46,14 @@ pipeline {
                     echo '{ "siteId": "'"$NETLIFY_SITE_ID"'" }' > .netlify/state.json
                     cat .netlify/state.json
 
-                    echo "Deploying to production. Site ID: $NETLIFY_SITE_ID"
-                    node_modules/.bin/netlify status
+                    echo "--- Checking build directory ---"
+                    ls -la build
+
+                    echo "--- Checking Netlify status ---"
+                    NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/netlify status
+
+                    echo "--- Deploying to production ---"
+                    NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/netlify deploy --dir=build --prod
                 '''
             }
         }
