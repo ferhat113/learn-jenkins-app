@@ -33,30 +33,29 @@ pipeline {
         }
 
         stage('Tests') {
-            // Only the Unit Tests stage remains, removing the parallel block
-            stage('Unit tests') {
-                // Use the node:18-alpine Docker image for running unit tests
-                agent {
-                    docker {
-                        image 'node:18-alpine'
-                        reuseNode true
-                    }
+            // This stage now directly contains the test steps and post-actions.
+            
+            // Use the node:18-alpine Docker image for running unit tests
+            agent {
+                docker {
+                    image 'node:18-alpine'
+                    reuseNode true
                 }
+            }
 
-                steps {
-                    sh '''
-                        echo "--- Running Unit Tests ---"
-                        # Run tests (assuming this command generates a JUnit XML report)
-                        npm test
-                    '''
-                }
-                
-                // Post-build actions to always execute
-                post {
-                    // Publish the JUnit test results
-                    always {
-                        junit 'jest-results/junit.xml'
-                    }
+            steps {
+                sh '''
+                    echo "--- Running Unit Tests ---"
+                    # Run tests (assuming this command generates a JUnit XML report)
+                    npm test
+                '''
+            }
+            
+            // Post-build actions to always execute
+            post {
+                // Publish the JUnit test results
+                always {
+                    junit 'jest-results/junit.xml'
                 }
             }
         }
