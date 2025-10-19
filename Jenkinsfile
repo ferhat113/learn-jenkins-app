@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        NETLIFY_SITE_ID = 'cf6f0666-741a-4c5f-a6bc-c551ee146206'
+        NETLIFY_SITE_ID = '03d4042d-476c-4668-9ce8-34352dad73e4'
         NETLIFY_AUTH_TOKEN = credentials('netlify-token')
     }
 
@@ -35,13 +35,25 @@ pipeline {
                     reuseNode true
                 }
             }
-             steps {
+            steps {
                 sh '''
-                    npm install netlify-cli
+                    echo "--- Installing Netlify CLI for deployment ---"
+                    npm install netlify-cli@17.37.0
                     node_modules/.bin/netlify --version
-                    echo "Deploying to production. Site ID: $NETLIFY_SITE_ID"
-                    node_modules/.bin/netlify status
-                    node_modules/.bin/netlify deploy --dir=build --prod
+
+                    echo "--- Creating .netlify/state.json manually ---"
+                    mkdir -p .netlify
+                    echo '{ "siteId": "'"$NETLIFY_SITE_ID"'" }' > .netlify/state.json
+                    cat .netlify/state.json
+
+                    echo "--- Checking build directory ---"
+                    ls -la build
+
+                    echo "--- Checking Netlify status ---"
+                    NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/netlify status
+
+                    echo "--- Deploying to production ---"
+                    NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/netlify deploy --dir=build --prod
                 '''
             }
         }
