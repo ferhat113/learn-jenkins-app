@@ -1,5 +1,5 @@
 pipeline {
-    // Agent definition for the entire pipeline (used if no stage-specific agent is defined)
+    // Agent definition for the entire pipeline
     agent any
 
     stages {
@@ -9,25 +9,15 @@ pipeline {
             agent {
                 docker {
                     image 'node:18-alpine'
-                    // Reuse the container if possible for faster subsequent steps
                     reuseNode true
                 }
             }
             steps {
-                // Execute standard node/npm build commands
                 sh '''
                     echo "--- Starting Build Stage ---"
-                    node --version
-                    npm --version
-                    
-                    # Install dependencies from package-lock.json (faster and safer than npm install)
                     npm ci
-                    
-                    # Run the build process (e.g., creating the 'build' directory)
                     npm run build
-                    
-                    echo "--- Build completed. Contents of workspace: ---"
-                    ls -la
+                    echo "--- Build completed. The 'build/' directory is ready. ---"
                 '''
             }
         }
@@ -42,7 +32,7 @@ pipeline {
                 }
             }
             
-            // CORRECT SYNTAX: Use the 'environment' block to set variables for the whole stage.
+            // Set environment variables to configure the jest-junit reporter output path
             environment {
                 JEST_JUNIT_OUTPUT_DIR = 'jest-results'
                 JEST_JUNIT_OUTPUT_NAME = 'junit.xml'
@@ -50,27 +40,21 @@ pipeline {
 
             steps {
                 sh '''
-                    echo "--- Running Unit Tests and configuring JUnit report output ---"
-                    # Ensure the output directory exists
+                    echo "--- Running Unit Tests ---"
                     mkdir -p jest-results
-                    
-                    # Run tests. The environment variables set above direct the 'jest-junit' reporter.
                     npm test
                 '''
             }
             
-            // Post-build actions to always execute
             post {
-                // Publish the JUnit test results
                 always {
-                    // This path now correctly matches the environment variable configuration in the 'environment' block.
                     junit "${JEST_JUNIT_OUTPUT_DIR}/${JEST_JUNIT_OUTPUT_NAME}"
                 }
             }
         }
 
-        stage('Deploy') {
-            // Use the node:18-alpine Docker image for deployment tasks
+        stage('Deploy to Server') {
+            // Reusing node:18-alpine, but we must install the SSH client inside it.
             agent {
                 docker {
                     image 'node:18-alpine'
@@ -78,15 +62,33 @@ pipeline {
                 }
             }
             steps {
-                sh '''
-                    echo "--- Starting Deployment Setup ---"
-                    # Install Netlify CLI globally or locally to run deployment commands
-                    npm install netlify-cli
-                    node_modules/.bin/netlify --version
-                    
-                    # Add your actual deployment logic here, e.g.:
-                    # node_modules/.bin/netlify deploy --dir=build --prod --auth $NETLIFY_AUTH_TOKEN
-                '''
+                // 1. Install SSH/SCP utility (essential for Alpine-based images)
+                sh 'apk add --no-cache openssh-client'
+                
+                // 2. Use withCredentials and sshagent for secure deployment
+                withCredentials([sshUserPrivateKey(credentialsId: 'SSH_SERVER_CREDENTIALS', keyFileVariable: 'SSH_KEY')]) {
+                    sshagent(['SSH_SERVER_CREDENTIALS']) {
+                        sh '''
+                            echo "--- Starting secure deployment to 192.168.0.13 ---"
+                            
+                            # --- Configuration Variables ---
+                            # IMPORTANT: Replace these placeholders with your actual server details
+                            REMOTE_HOST="192.168.0.13"
+                            REMOTE_USER="jenkins_deploy_user" 
+                            REMOTE_PATH="/var/www/my-app" 
+                            
+                            # Optional: Ensure the remote directory exists before copying
+                            # This uses 'ssh' to execute a remote command.
+                            ssh -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH"
+
+                            # Copy the contents of the 'build' directory recursively to the remote server
+                            # The 'build/.' ensures we copy the *contents* of 'build', not the 'build' folder itself.
+                            scp -r -o StrictHostKeyChecking=no build/. $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH
+                            
+                            echo "Deployment successful to $REMOTE_HOST:$REMOTE_PATH"
+                        '''
+                    }
+                }
             }
         }
     }
