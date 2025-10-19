@@ -54,42 +54,32 @@ pipeline {
         }
 
         stage('Deploy to Server') {
-            // Reusing node:18-alpine.
+            // FIX: We switch the base image to `debian:stable-slim`.
+            // This is a minimal, Debian-based image that typically allows for easier package installation 
+            // of tools like SSH than the Alpine images in a non-root environment.
+            // NOTE: `reuseNode true` is removed because we are using a different base image.
             agent {
                 docker {
-                    image 'node:18-alpine'
-                    reuseNode true
+                    image 'debian:stable-slim' 
                 }
             }
             steps {
-                // 1. Install SSH/SCP utility (essential for Alpine-based images) with root privileges.
-                // We must use a script block and the `container` step to run as a privileged user (or use a different user).
-                // A simpler, more common pattern in Declarative pipelines is to switch to a different image 
-                // that has the tool pre-installed. Since changing the image is difficult with `reuseNode: true`,
-                // the next best thing is to run a separate container just for the privileged command.
-                
-                // --- FIX: Use a simple, one-off container running as root to install the package.
-                // Since `reuseNode` is set, this is the most reliable way to gain root access for `apk add`.
-                // NOTE: This will run a *new* container on the same node just to install the package.
-                script {
-                    docker.image('node:18-alpine').withRun('-u 0') { container ->
-                        sh 'apk add --no-cache openssh-client'
-                    }
-                }
+                // 1. Install SSH/SCP utility using `apt-get` on the Debian-based image.
+                // We assume the Jenkins user has permission to install packages within this temporary container.
+                sh 'apt-get update -y && apt-get install openssh-client -y'
                 
                 // 2. Use withCredentials and sshagent for secure deployment.
-                // This block runs in the original (reused) non-root container, which now has `openssh-client` installed.
                 withCredentials([sshUserPrivateKey(credentialsId: 'SSH_SERVER_CREDENTIALS', keyFileVariable: 'SSH_KEY')]) {
                     sshagent(['SSH_SERVER_CREDENTIALS']) {
                         sh '''
                             echo "--- Starting secure deployment to 192.168.0.13 ---"
                             
-                            # --- Configuration Variables ---
+                            # --- Configuration Variables (Adjust these as needed) ---
                             REMOTE_HOST="192.168.0.13"
                             REMOTE_USER="jenkins_deploy_user" 
                             REMOTE_PATH="/var/www/my-app" 
                             
-                            # Optional: Ensure the remote directory exists before copying
+                            # Ensure the remote directory exists
                             ssh -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_PATH"
 
                             # Copy the contents of the 'build' directory recursively to the remote server
