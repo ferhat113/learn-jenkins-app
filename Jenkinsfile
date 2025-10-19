@@ -41,7 +41,7 @@ pipeline {
                     node_modules/.bin/netlify status
                     echo "Current directory: $(pwd)"
                     ls -la
-                    node_modules/.bin/netlify deploy --dir=build --prod
+                    //node_modules/.bin/netlify deploy --dir=build --prod
                 '''
             }
         }
