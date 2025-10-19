@@ -1,14 +1,14 @@
 pipeline {
-    // Agent definition for the entire pipeline
     agent any
 
-    // Define the image name globally. 
     environment {
-        // Jenkins is on the Worker node (192.168.0.33), so this is the registry host.
         IMAGE_HOST = "192.168.0.33"
         IMAGE_NAME = "${IMAGE_HOST}:5000/my-react-app:${env.BUILD_NUMBER}"
-        LOCAL_PORT = "8080"  // Port for local deployment (on 192.168.0.33)
-        REMOTE_PORT = "8081" // Port for remote deployment (on 192.168.0.34)
+        LOCAL_PORT = "8080"
+        REMOTE_PORT = "8081"
+        CONTAINER_NAME_LOCAL = "react-app-local"
+        CONTAINER_NAME_REMOTE = "react-app-remote"
+        REMOTE_HOST = "192.168.0.34"
     }
 
     stages {
@@ -25,7 +25,7 @@ pipeline {
             }
         }
 
-        stage('Tests') {
+        stage('Test') {
             agent {
                 docker {
                     image 'node:18-alpine'
@@ -45,92 +45,72 @@ pipeline {
                 }
             }
         }
-        
-        stage('Package (Docker Image)') {
-            steps {
-                // FIX 1: Create Dockerfile outside of withDockerContainer context to ensure shell stability
-                sh '''
-                    echo "FROM nginx:alpine" > Dockerfile
-                    echo "COPY build /usr/share/nginx/html" >> Dockerfile
-                    echo "EXPOSE 80" >> Dockerfile
-                '''
 
-                // Now run the Docker client container to build and push the image
-                script {
-                    docker.image('docker:24.0-cli').withRun('-v /var/run/docker.sock:/var/run/docker.sock -u 0') { container ->
-                        sh '''
-                            echo "--- Building Docker Image: ${IMAGE_NAME} ---"
-                            
-                            # Build the image 
-                            docker build -t ${IMAGE_NAME} .
-                            
-                            # Push the image to the local registry (192.168.0.33:5000)
-                            docker push ${IMAGE_NAME}
-                            echo "--- Docker Image Pushed to Registry: ${IMAGE_NAME} ---"
-                        '''
-                    }
-                }
+        stage('Create Dockerfile') {
+            steps {
+                writeFile file: 'Dockerfile', text: '''
+                    FROM nginx:alpine
+                    COPY build /usr/share/nginx/html
+                    EXPOSE 80
+                '''
             }
         }
 
-        stage('Deploy Locally (Worker Node - 192.168.0.33)') {
-            // Deploying on the Jenkins host, so we use the Docker client directly.
+        stage('Build and Push Docker Image') {
             agent {
                 docker {
                     image 'docker:24.0-cli'
-                    args '-v /var/run/docker.sock:/var/run/docker.sock -u 0' 
+                    args '-v /var/run/docker.sock:/var/run/docker.sock -u 0'
                     reuseNode true
                 }
             }
             steps {
                 sh '''
-                    echo "--- Starting local Docker deployment to ${IMAGE_HOST}:${LOCAL_PORT} ---"
-                    
-                    CONTAINER_NAME="react-app-local"
-
-                    # Stop and remove the old container
-                    docker ps -a --format '{{.Names}}' | grep ${CONTAINER_NAME} && docker rm -f ${CONTAINER_NAME} || true
-                    
-                    # The image is already local, just run it.
-                    docker run -d --name ${CONTAINER_NAME} -p ${LOCAL_PORT}:80 ${IMAGE_NAME}
-                    
-                    echo "Local Deployment successful! App is running on ${IMAGE_HOST}:${LOCAL_PORT}"
+                    echo "--- Building Docker Image: ${IMAGE_NAME} ---"
+                    docker build -t ${IMAGE_NAME} .
+                    docker push ${IMAGE_NAME}
+                    echo "--- Docker Image Pushed to Registry ---"
                 '''
             }
         }
 
-        stage('Deploy Remotely (Manager Node - 192.168.0.34)') {
+        stage('Deploy Locally') {
             agent {
                 docker {
-                    image 'instrumentisto/rsync-ssh' 
-                    args '-u 0' // Run as root to avoid UID issues
+                    image 'docker:24.0-cli'
+                    args '-v /var/run/docker.sock:/var/run/docker.sock -u 0'
+                    reuseNode true
                 }
             }
             steps {
-                // FIX 2: Use only usernameVariable, the key file is handled entirely by sshagent.
+                sh '''
+                    echo "--- Deploying Locally on ${IMAGE_HOST}:${LOCAL_PORT} ---"
+                    docker rm -f ${CONTAINER_NAME_LOCAL} || true
+                    docker run -d --name ${CONTAINER_NAME_LOCAL} -p ${LOCAL_PORT}:80 ${IMAGE_NAME}
+                    echo "✅ Local deployment complete!"
+                '''
+            }
+        }
+
+        stage('Deploy Remotely') {
+            agent {
+                docker {
+                    image 'instrumentisto/rsync-ssh'
+                    args '-u 0'
+                }
+            }
+            steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'SSH_SERVER_CREDENTIALS', usernameVariable: 'SSH_USER')]) {
-                    // CRITICAL FIX: sshagent must wrap the sh block to inject the credentials socket.
                     sshagent(['SSH_SERVER_CREDENTIALS']) {
                         sh '''
-                            echo "--- Starting remote Docker deployment to 192.168.0.34:${REMOTE_PORT} ---"
-                            
-                            # --- Configuration Variables ---
-                            REMOTE_HOST="192.168.0.34"
-                            CONTAINER_NAME="react-app-remote"
-                            
+                            echo "--- Deploying Remotely to ${REMOTE_HOST}:${REMOTE_PORT} ---"
                             SSH_TARGET="${SSH_USER}@${REMOTE_HOST}"
-                            SSH_OPTS="-o StrictHostKeyChecking=no" # No need for -i, sshagent handles it.
+                            SSH_OPTS="-o StrictHostKeyChecking=no"
 
-                            # 1. Stop and remove the old container on the remote host (192.168.0.34)
-                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker ps -a --format '{{.Names}}' | grep ${CONTAINER_NAME} && docker rm -f ${CONTAINER_NAME}" || true
-                            
-                            # 2. Pull the latest image from the worker node's registry (192.168.0.33:5000)
+                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker rm -f ${CONTAINER_NAME_REMOTE} || true"
                             ssh ${SSH_OPTS} ${SSH_TARGET} "docker pull ${IMAGE_NAME}"
-
-                            # 3. Run the new container, mapping remote port 8081 to container port 80
-                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker run -d --name ${CONTAINER_NAME} -p ${REMOTE_PORT}:80 ${IMAGE_NAME}"
-                            
-                            echo "Remote Deployment successful! App is running on ${REMOTE_HOST}:${REMOTE_PORT}"
+                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker run -d --name ${CONTAINER_NAME_REMOTE} -p ${REMOTE_PORT}:80 ${IMAGE_NAME}"
+                            echo "✅ Remote deployment complete!"
                         '''
                     }
                 }
