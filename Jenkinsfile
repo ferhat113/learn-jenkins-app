@@ -9,11 +9,18 @@ pipeline {
         CONTAINER_NAME_LOCAL = "react-app-local"
         CONTAINER_NAME_REMOTE = "react-app-remote"
         REMOTE_HOST = "192.168.0.34"
+        DOCKERFILE_DIR = "docker"
     }
 
     stages {
 
-        stage('Build') {
+        stage('Clean Workspace') {
+            steps {
+                deleteDir()
+            }
+        }
+
+        stage('Build React App') {
             agent {
                 docker {
                     image 'node:18-alpine'
@@ -25,7 +32,7 @@ pipeline {
             }
         }
 
-        stage('Test') {
+        stage('Run Tests') {
             agent {
                 docker {
                     image 'node:18-alpine'
@@ -46,9 +53,10 @@ pipeline {
             }
         }
 
-        stage('Create Dockerfile') {
+        stage('Prepare Dockerfile') {
             steps {
-                writeFile file: 'Dockerfile', text: '''
+                sh 'mkdir -p ${DOCKERFILE_DIR}'
+                writeFile file: "${DOCKERFILE_DIR}/Dockerfile", text: '''
                     FROM nginx:alpine
                     COPY build /usr/share/nginx/html
                     EXPOSE 80
@@ -67,9 +75,9 @@ pipeline {
             steps {
                 sh '''
                     echo "--- Building Docker Image: ${IMAGE_NAME} ---"
-                    docker build -t ${IMAGE_NAME} .
+                    docker build -t ${IMAGE_NAME} -f ${DOCKERFILE_DIR}/Dockerfile .
                     docker push ${IMAGE_NAME}
-                    echo "--- Docker Image Pushed to Registry ---"
+                    echo "--- Docker Image Pushed ---"
                 '''
             }
         }
