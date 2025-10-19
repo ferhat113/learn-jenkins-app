@@ -9,7 +9,6 @@ pipeline {
     }
 
     stages {
-
         stage('Build') {
             agent {
                 docker {
@@ -42,7 +41,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Package (Docker Image)') {
             // FIX: Use the official Docker client image and mount the Docker socket
             agent {
@@ -99,28 +98,20 @@ pipeline {
                 ]) {
                     sh '''
                         echo "--- Starting remote Docker deployment to 192.168.0.13 ---"
-                        
-                        # --- Configuration Variables ---
+
                         REMOTE_HOST="192.168.0.13"
                         REMOTE_PORT="8080"
                         CONTAINER_NAME="react-app-production"
-                        
-                        # FIX 2: Use double quotes around $SSH_KEY to handle spaces in the path
-                        chmod 600 "$SSH_KEY"
-                        
-                        # SSH prefix arguments
-                        SSH_ARGS="-i \"$SSH_KEY\" -o StrictHostKeyChecking=no"
 
-                        # 1. Stop and remove the old container on the remote host (192.168.0.13)
-                        ssh ${SSH_ARGS} ${SSH_USER}@${REMOTE_HOST} "docker ps -a --format '{{.Names}}' | grep ${CONTAINER_NAME} && docker rm -f ${CONTAINER_NAME}" || true
-                        
-                        # 2. Pull the latest image from the manager node's registry (192.168.0.14)
+                        # Use full path to SSH key
+                        KEY_PATH="${WORKSPACE}/${SSH_KEY}"
+                        chmod 600 "$KEY_PATH"
+
+                        SSH_ARGS="-i \"$KEY_PATH\" -o StrictHostKeyChecking=no"
+
+                        ssh ${SSH_ARGS} ${SSH_USER}@${REMOTE_HOST} "docker rm -f ${CONTAINER_NAME}" || true
                         ssh ${SSH_ARGS} ${SSH_USER}@${REMOTE_HOST} "docker pull ${IMAGE_NAME}"
-
-                        # 3. Run the new container
                         ssh ${SSH_ARGS} ${SSH_USER}@${REMOTE_HOST} "docker run -d --name ${CONTAINER_NAME} -p ${REMOTE_PORT}:80 ${IMAGE_NAME}"
-                        
-                        echo "Deployment successful! App is running on $REMOTE_HOST:$REMOTE_PORT"
                     '''
                 }
             }
