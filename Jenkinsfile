@@ -28,7 +28,7 @@ pipeline {
                 }
             }
             steps {
-                sh 'npm ci && npm run build'
+                sh 'npm install && npm run build'
             }
         }
 
