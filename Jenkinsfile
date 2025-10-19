@@ -48,7 +48,8 @@ pipeline {
             agent {
                 docker {
                     image 'docker:24.0-cli'
-                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                    // FIX: Added -u 0 to run as root and gain access to the Docker socket
+                    args '-v /var/run/docker.sock:/var/run/docker.sock -u 0' 
                     reuseNode true // Use the same node where the build happened
                 }
             }
