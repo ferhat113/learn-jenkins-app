@@ -33,7 +33,6 @@ pipeline {
         }
 
         stage('Tests') {
-            // This stage now directly contains the test steps and post-actions.
             
             // Use the node:18-alpine Docker image for running unit tests
             agent {
@@ -42,30 +41,30 @@ pipeline {
                     reuseNode true
                 }
             }
+            
+            // CORRECT SYNTAX: Use the 'environment' block to set variables for the whole stage.
+            environment {
+                JEST_JUNIT_OUTPUT_DIR = 'jest-results'
+                JEST_JUNIT_OUTPUT_NAME = 'junit.xml'
+            }
 
-            // The 'withEnv' block sets the variables that direct the 'jest-junit' reporter 
-            // to write the XML file to the path expected by the Jenkins 'junit' step.
-            withEnv(['JEST_JUNIT_OUTPUT_DIR=jest-results', 'JEST_JUNIT_OUTPUT_NAME=junit.xml']) {
-                steps {
-                    sh '''
-                        echo "--- Running Unit Tests and configuring JUnit report output ---"
-                        # NOTE: This relies on 'jest-junit' being configured as a test processor in your project's jest setup.
-                        
-                        # 1. Ensure the output directory exists
-                        mkdir -p jest-results
-                        
-                        # 2. Run tests. JEST_JUNIT environment variables will direct the output.
-                        npm test
-                    '''
-                }
-                
-                // Post-build actions to always execute
-                post {
-                    // Publish the JUnit test results
-                    always {
-                        // This path now correctly matches the environment variable configuration above.
-                        junit 'jest-results/junit.xml'
-                    }
+            steps {
+                sh '''
+                    echo "--- Running Unit Tests and configuring JUnit report output ---"
+                    # Ensure the output directory exists
+                    mkdir -p jest-results
+                    
+                    # Run tests. The environment variables set above direct the 'jest-junit' reporter.
+                    npm test
+                '''
+            }
+            
+            // Post-build actions to always execute
+            post {
+                // Publish the JUnit test results
+                always {
+                    // This path now correctly matches the environment variable configuration in the 'environment' block.
+                    junit "${JEST_JUNIT_OUTPUT_DIR}/${JEST_JUNIT_OUTPUT_NAME}"
                 }
             }
         }
