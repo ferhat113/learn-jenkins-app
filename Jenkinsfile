@@ -54,21 +54,18 @@ pipeline {
         }
 
         stage('Deploy to Server') {
-            // FIX: We switch the base image to `debian:stable-slim`.
-            // This is a minimal, Debian-based image that typically allows for easier package installation 
-            // of tools like SSH than the Alpine images in a non-root environment.
-            // NOTE: `reuseNode true` is removed because we are using a different base image.
+            // FIX: Using a dedicated tool image that already has the SSH client installed, 
+            // bypassing all permission issues related to `apt-get` or `apk add`.
             agent {
                 docker {
-                    image 'debian:stable-slim' 
+                    image 'instrumentisto/rsync-ssh' 
+                    // NOTE: `reuseNode true` is removed because we are using a different, dedicated image.
                 }
             }
             steps {
-                // 1. Install SSH/SCP utility using `apt-get` on the Debian-based image.
-                // We assume the Jenkins user has permission to install packages within this temporary container.
-                sh 'apt-get update -y && apt-get install openssh-client -y'
+                // The deployment is now a straight transfer, no installation step needed.
                 
-                // 2. Use withCredentials and sshagent for secure deployment.
+                // Use withCredentials and sshagent for secure deployment.
                 withCredentials([sshUserPrivateKey(credentialsId: 'SSH_SERVER_CREDENTIALS', keyFileVariable: 'SSH_KEY')]) {
                     sshagent(['SSH_SERVER_CREDENTIALS']) {
                         sh '''
