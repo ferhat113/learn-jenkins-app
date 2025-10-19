@@ -2,13 +2,17 @@ pipeline {
     // Agent definition for the entire pipeline
     agent any
 
-    // Define the image name globally, using the manager's IP for the registry
+    // Define the image name globally. 
     environment {
-        // Since Jenkins is on 192.168.0.14, we tag the image against this IP for the worker to pull.
-        IMAGE_NAME = "192.168.0.14:5000/my-react-app:${env.BUILD_NUMBER}"
+        // Jenkins is on the Worker node (192.168.0.33), so this is the registry host.
+        IMAGE_HOST = "192.168.0.33"
+        IMAGE_NAME = "${IMAGE_HOST}:5000/my-react-app:${env.BUILD_NUMBER}"
+        LOCAL_PORT = "8080"  // Port for local deployment (on 192.168.0.33)
+        REMOTE_PORT = "8081" // Port for remote deployment (on 192.168.0.34)
     }
 
     stages {
+
         stage('Build') {
             agent {
                 docker {
@@ -41,78 +45,94 @@ pipeline {
                 }
             }
         }
-
+        
         stage('Package (Docker Image)') {
-            // FIX: Use the official Docker client image and mount the Docker socket
+            steps {
+                // FIX 1: Create Dockerfile outside of withDockerContainer context to ensure shell stability
+                sh '''
+                    echo "FROM nginx:alpine" > Dockerfile
+                    echo "COPY build /usr/share/nginx/html" >> Dockerfile
+                    echo "EXPOSE 80" >> Dockerfile
+                '''
+
+                // Now run the Docker client container to build and push the image
+                script {
+                    docker.image('docker:24.0-cli').withRun('-v /var/run/docker.sock:/var/run/docker.sock -u 0') { container ->
+                        sh '''
+                            echo "--- Building Docker Image: ${IMAGE_NAME} ---"
+                            
+                            # Build the image 
+                            docker build -t ${IMAGE_NAME} .
+                            
+                            # Push the image to the local registry (192.168.0.33:5000)
+                            docker push ${IMAGE_NAME}
+                            echo "--- Docker Image Pushed to Registry: ${IMAGE_NAME} ---"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Locally (Worker Node - 192.168.0.33)') {
+            // Deploying on the Jenkins host, so we use the Docker client directly.
             agent {
                 docker {
                     image 'docker:24.0-cli'
-                    // FIX: Added -u 0 to run as root and gain access to the Docker socket
                     args '-v /var/run/docker.sock:/var/run/docker.sock -u 0' 
-                    reuseNode true // Use the same node where the build happened
+                    reuseNode true
                 }
             }
             steps {
                 sh '''
-                    echo "--- Building Docker Image: ${IMAGE_NAME} ---"
+                    echo "--- Starting local Docker deployment to ${IMAGE_HOST}:${LOCAL_PORT} ---"
                     
-                    # Ensure Docker daemon is running (important in shared environments)
-                    if ! docker info > /dev/null 2>&1; then
-                        echo "Docker daemon is not running or socket is not accessible."
-                        exit 1
-                    fi
-                    
-                    # Create a simple Nginx Dockerfile in the workspace
-                    cat > Dockerfile <<EOF
-                    FROM nginx:alpine
-                    COPY build /usr/share/nginx/html
-                    EXPOSE 80
-                    EOF
+                    CONTAINER_NAME="react-app-local"
 
-                    # Build the image and tag it against the manager's registry (192.168.0.14)
-                    docker build -t ${IMAGE_NAME} .
+                    # Stop and remove the old container
+                    docker ps -a --format '{{.Names}}' | grep ${CONTAINER_NAME} && docker rm -f ${CONTAINER_NAME} || true
                     
-                    # Ensure the local registry is running on 192.168.0.14:5000 before pushing
-                    docker push ${IMAGE_NAME}
-                    echo "--- Docker Image Pushed to Registry: ${IMAGE_NAME} ---"
+                    # The image is already local, just run it.
+                    docker run -d --name ${CONTAINER_NAME} -p ${LOCAL_PORT}:80 ${IMAGE_NAME}
+                    
+                    echo "Local Deployment successful! App is running on ${IMAGE_HOST}:${LOCAL_PORT}"
                 '''
             }
         }
 
-        stage('Deploy to Server') {
+        stage('Deploy Remotely (Manager Node - 192.168.0.34)') {
             agent {
                 docker {
                     image 'instrumentisto/rsync-ssh' 
-                    // FIX: Run as root (UID 0) to avoid the "No user exists for uid 1000" error
-                    args '-u 0' 
+                    args '-u 0' // Run as root to avoid UID issues
                 }
             }
             steps {
-                // Expose the key file path (SSH_KEY) and username (SSH_USER).
-                withCredentials([
-                    sshUserPrivateKey(
-                        credentialsId: 'SSH_SERVER_CREDENTIALS', 
-                        keyFileVariable: 'SSH_KEY',
-                        usernameVariable: 'SSH_USER'
-                    )
-                ]) {
-                    sh '''
-                        echo "--- Starting remote Docker deployment to 192.168.0.13 ---"
+                // FIX 2: Use only usernameVariable, the key file is handled entirely by sshagent.
+                withCredentials([sshUserPrivateKey(credentialsId: 'SSH_SERVER_CREDENTIALS', usernameVariable: 'SSH_USER')]) {
+                    // CRITICAL FIX: sshagent must wrap the sh block to inject the credentials socket.
+                    sshagent(['SSH_SERVER_CREDENTIALS']) {
+                        sh '''
+                            echo "--- Starting remote Docker deployment to 192.168.0.34:${REMOTE_PORT} ---"
+                            
+                            # --- Configuration Variables ---
+                            REMOTE_HOST="192.168.0.34"
+                            CONTAINER_NAME="react-app-remote"
+                            
+                            SSH_TARGET="${SSH_USER}@${REMOTE_HOST}"
+                            SSH_OPTS="-o StrictHostKeyChecking=no" # No need for -i, sshagent handles it.
 
-                        REMOTE_HOST="192.168.0.13"
-                        REMOTE_PORT="8080"
-                        CONTAINER_NAME="react-app-production"
+                            # 1. Stop and remove the old container on the remote host (192.168.0.34)
+                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker ps -a --format '{{.Names}}' | grep ${CONTAINER_NAME} && docker rm -f ${CONTAINER_NAME}" || true
+                            
+                            # 2. Pull the latest image from the worker node's registry (192.168.0.33:5000)
+                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker pull ${IMAGE_NAME}"
 
-                        # Use full path to SSH key
-                        KEY_PATH="${WORKSPACE}/${SSH_KEY}"
-                        chmod 600 "$KEY_PATH"
-
-                        SSH_ARGS="-i \"$KEY_PATH\" -o StrictHostKeyChecking=no"
-
-                        ssh ${SSH_ARGS} ${SSH_USER}@${REMOTE_HOST} "docker rm -f ${CONTAINER_NAME}" || true
-                        ssh ${SSH_ARGS} ${SSH_USER}@${REMOTE_HOST} "docker pull ${IMAGE_NAME}"
-                        ssh ${SSH_ARGS} ${SSH_USER}@${REMOTE_HOST} "docker run -d --name ${CONTAINER_NAME} -p ${REMOTE_PORT}:80 ${IMAGE_NAME}"
-                    '''
+                            # 3. Run the new container, mapping remote port 8081 to container port 80
+                            ssh ${SSH_OPTS} ${SSH_TARGET} "docker run -d --name ${CONTAINER_NAME} -p ${REMOTE_PORT}:80 ${IMAGE_NAME}"
+                            
+                            echo "Remote Deployment successful! App is running on ${REMOTE_HOST}:${REMOTE_PORT}"
+                        '''
+                    }
                 }
             }
         }
