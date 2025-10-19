@@ -8,13 +8,6 @@ pipeline {
     }
 
     stages {
-        stage('Clone') {
-            steps {
-                // Replace with your repo URL
-                git 'https://github.com/your-username/your-repo.git'
-            }
-        }
-
         stage('Build') {
             agent {
                 docker {
