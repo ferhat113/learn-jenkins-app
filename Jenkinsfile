@@ -16,6 +16,7 @@ pipeline {
             }
             steps {
                 sh '''
+                    echo "--- Running npm installation and build ---"
                     ls -la
                     node --version
                     npm --version
@@ -25,29 +26,21 @@ pipeline {
                 '''
             }
         }
-
+        
         stage('Deploy') {
             agent {
                 docker {
-                    image 'node:18-alpine' // Consider switching to a non-Alpine image if issues persist
+                    image 'node:18-alpine'
                     reuseNode true
                 }
             }
             steps {
                 sh '''
+                    echo "--- Installing Netlify CLI for deployment ---"
                     npm install netlify-cli
                     node_modules/.bin/netlify --version
                     echo "Deploying to production. Site ID: $NETLIFY_SITE_ID"
                     node_modules/.bin/netlify status
-                    echo "Current directory: $(pwd)"
-                    ls -la
-
-                    # Run the build command to double check its success
-                    echo "Running npm run build to check for errors..."
-                    npm run build
-                    
-                    # Deploy only if build is successful
-                    echo "Deploying to Netlify..."
                     node_modules/.bin/netlify deploy --dir=build --prod
                 '''
             }
