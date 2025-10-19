@@ -39,8 +39,13 @@ pipeline {
                     echo "--- Installing Netlify CLI for deployment ---"
                     npm install netlify-cli
                     node_modules/.bin/netlify --version
+
+                    echo "--- Creating .netlify/state.json manually ---"
+                    mkdir -p .netlify
+                    echo '{ "siteId": "'"$NETLIFY_SITE_ID"'" }' > .netlify/state.json
+                    cat .netlify/state.json
+
                     echo "Deploying to production. Site ID: $NETLIFY_SITE_ID"
-                    node_modules/.bin/netlify link --id=$NETLIFY_SITE_ID
                     node_modules/.bin/netlify status
                     node_modules/.bin/netlify deploy --dir=build --prod
                 '''
