@@ -12,7 +12,7 @@ function App() {
           target="_blank"
           rel="noopener noreferrer"
         >
-          Sabir was here !!!
+          B11 was here !!!
         </a>
       </header>
       <p>
