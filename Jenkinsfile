@@ -27,6 +27,58 @@ pipeline {
                 '''
             }
         }
+                stage('Tests') {
+            parallel {
+                stage('Unit tests') {
+                    agent {
+                        docker {
+                            image 'node:18-alpine'
+                            reuseNode true
+                        }
+                    }
+
+                    steps {
+                        sh '''
+                            npm test
+                        '''
+                    }
+                    post {
+                        always {
+                            junit 'jest-results/junit.xml'
+                        }
+                    }
+                }
+
+                stage('E2E') {
+                    agent {
+                        docker {
+                            image 'ubuntu:22.04'
+                            reuseNode true
+                        }
+                    }
+
+                    steps {
+                        sh '''
+                            apt-get update && apt-get install -y \
+                                curl \
+                                && curl -sSL https://deb.nodesource.com/setup_18.x | bash - \
+                                && apt-get install -y nodejs \
+                                && npm install -g playwright \
+                                && npm install serve \
+                                && serve -s build & \
+                                sleep 10 \
+                                && npx playwright test --reporter=html
+                        '''
+                    }
+
+                    post {
+                        always {
+                            publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'playwright-report', reportFiles: 'index.html', reportName: 'Local E2E', reportTitles: '', useWrapperFileDirectly: true])
+                        }
+                    }
+                }
+            }
+        }
         stage('Deploy Staging') {
             agent {
                 docker {
