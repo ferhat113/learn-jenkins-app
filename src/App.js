@@ -12,11 +12,11 @@ function App() {
           target="_blank"
           rel="noopener noreferrer"
         >
-          Bouhdache was here.    So was Sabir !
+          Bouhdache was here !
         </a>
       </header>
       <p>
-          Karim Ouvey3id too !
+          App version 1
       </p>
     </div>
   );

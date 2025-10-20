@@ -37,7 +37,7 @@ pipeline {
             steps {
                 sh '''
                     echo "--- Installing Netlify CLI for deployment ---"
-                    npm install netlify-cli@17.37.0
+                    npm install netlify-cli@17.37.0 node-jq
                     node_modules/.bin/netlify --version
 
                     echo "--- Creating .netlify/state.json manually ---"
@@ -52,7 +52,8 @@ pipeline {
                     NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/netlify status
 
                     echo "--- Deploying to production ---"
-                    NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/netlify deploy --dir=build
+                    NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/netlify deploy --dir=build --json > deploy-output.json
+                    NETLIFY_AUTH_TOKEN=$NETLIFY_AUTH_TOKEN node_modules/.bin/node-jq -r '.deploy_url' deploy-output.json
                 '''
             }
         }
