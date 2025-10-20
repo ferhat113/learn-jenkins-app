@@ -12,11 +12,11 @@ function App() {
           target="_blank"
           rel="noopener noreferrer"
         >
-          B11 was here !!!
+          Bouhdache was here !!!
         </a>
       </header>
       <p>
-          Application version: 1
+          So was Sabir :)
       </p>
     </div>
   );
